@@ -11,10 +11,24 @@
 ```powershell
 git clone <repository-url>
 cd struct-layout-optimizer
-python -m examples.basic_usage
+python optimize_header.py tests/fixtures/layout_cases.hpp --root TelemetryPacket
 ```
 
-## 描述结构体
+项目的正式输入是 C/C++ 头文件。`--root` 指定需要优化的顶层 struct 或 union；省略时使用头文件中最后一个定义：
+
+```powershell
+python optimize_header.py path\to\types.hpp --root Packet
+```
+
+首版头文件解析器支持：
+
+- `uint1`、`uint12`、`uint17` 等任意位宽类型；
+- `uint32_t field : 17` 形式的 C/C++ 位域；
+- 命名 struct/union 嵌套；
+- 定长数组和结构体数组；
+- 名称包含 `rsvd` 或 `reserved` 的可拆分保留域。
+
+## Python API
 
 ```python
 from struct_layout_optimizer import (
@@ -74,11 +88,14 @@ python -m unittest discover -v
 
 ```text
 struct-layout-optimizer/
+├── cpp_header_parser.py        # C/C++ 头文件输入解析
+├── optimize_header.py          # 命令行入口
 ├── struct_layout_optimizer.py   # 数据模型、搜索算法和报告接口
 ├── examples/                    # 可运行示例
 ├── tests/
-│   ├── cases.py                 # 独立测试用例定义（等价于测试头文件）
-│   └── test_optimizer.py        # 测试执行与断言
+│   ├── fixtures/layout_cases.hpp # C++ 头文件输入用例
+│   ├── test_cpp_header_parser.py # 头文件解析集成测试
+│   └── test_optimizer.py         # 优化算法断言
 ├── docs/algorithm.md            # 算法与复杂度说明
 ├── pyproject.toml               # Python 项目元数据
 ├── LICENSE
