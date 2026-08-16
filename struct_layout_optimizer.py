@@ -217,15 +217,25 @@ def _crossings(offset: int, bits: int, boundary: int) -> int:
     return (offset + bits - 1) // boundary - offset // boundary
 
 
+def _field_cost(offset: int, bits: int) -> Cost:
+    """Return the hardware boundary cost for one non-reserved leaf field.
+
+    BYTE crossing matters only for sub-BYTE fields.  A field whose width is
+    one BYTE or wider is fetched as a wider value and therefore contributes
+    only to the 32-bit WORD crossing objective.
+    """
+    return Cost(
+        cross32=_crossings(offset, bits, 32),
+        cross8=_crossings(offset, bits, 8) if bits < 8 else 0,
+    )
+
+
 def evaluate(template: Template, start: int = 0, path: str = "") -> Result:
     if isinstance(template, _AtomTemplate):
         type_ = template.type
         bits = size_bits(type_)
         reserved = isinstance(type_, Reserved)
-        cost = Cost() if reserved else Cost(
-            cross32=_crossings(start, bits, 32),
-            cross8=_crossings(start, bits, 8),
-        )
+        cost = Cost() if reserved else _field_cost(start, bits)
         return Result(bits, cost, (Placement(path, start, bits, reserved),))
 
     if isinstance(template, _ArrayTemplate):
@@ -301,10 +311,7 @@ def evaluate_original(type_: Type, start: int = 0, path: str | None = None) -> R
     if isinstance(type_, (UInt, Reserved)):
         bits = type_.bits
         reserved = isinstance(type_, Reserved)
-        cost = Cost(rsvd_fragments=1) if reserved else Cost(
-            cross32=_crossings(start, bits, 32),
-            cross8=_crossings(start, bits, 8),
-        )
+        cost = Cost(rsvd_fragments=1) if reserved else _field_cost(start, bits)
         return Result(bits, cost, (Placement(root_path, start, bits, reserved),))
 
     if isinstance(type_, Struct):

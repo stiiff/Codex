@@ -38,25 +38,29 @@ cross(offset, width, boundary) =
     - floor(offset / boundary)
 ```
 
-BYTE 和 WORD 跨界次数分别为：
+WORD 跨界对所有普通叶子字段计算；BYTE 跨界只对位宽严格小于 8 bit 的字段计算：
 
 ```text
-cross8  = cross(offset, width, 8)
 cross32 = cross(offset, width, 32)
+
+if width < 8:
+    cross8 = cross(offset, width, 8)
+else:
+    cross8 = 0
 ```
 
-例如 `uint17` 从 bit 0 开始，占用 bit 0～16：
+例如 `uint17` 从 bit 0 开始，占用 bit 0～16。它大于一个 BYTE，因此不计算 BYTE 跨界：
 
 ```text
 cross32 = 0
-cross8  = 2
+cross8  = 0
 ```
 
 如果它从 bit 24 开始，占用 bit 24～40：
 
 ```text
 cross32 = 1
-cross8  = 2
+cross8  = 0
 ```
 
 ## 3. 优化目标

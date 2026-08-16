@@ -14,14 +14,34 @@ from struct_layout_optimizer import (
 
 
 class OptimizerTests(unittest.TestCase):
+    def test_byte_crossing_is_only_scored_for_sub_byte_fields(self):
+        wide = Struct("Wide", [Field("head", UInt(7)), Field("value", UInt(12))])
+        narrow = Struct("Narrow", [Field("head", UInt(7)), Field("value", UInt(7))])
+
+        wide_original = compare_layouts(wide).original
+        narrow_original = compare_layouts(narrow).original
+
+        # uint12 starts at bit 7 and crosses BYTE boundaries, but BYTE cost is
+        # intentionally ignored because its width is greater than one BYTE.
+        self.assertEqual(wide_original.cost.cross8, 0)
+        # The second uint7 starts at bit 7 and crosses the bit-8 boundary.
+        self.assertEqual(narrow_original.cost.cross8, 1)
+
+    def test_exactly_one_byte_does_not_contribute_byte_cost(self):
+        value = Struct("S", [Field("prefix", UInt(3)), Field("byte", UInt(8))])
+        self.assertEqual(compare_layouts(value).original.cost.cross8, 0)
+
     def test_reorders_fields_to_avoid_word_crossing(self):
-        value = Struct("S", [Field("a", UInt(17)), Field("b", UInt(16))])
+        value = Struct(
+            "S",
+            [Field("a", UInt(17)), Field("b", UInt(8)), Field("c", UInt(15))],
+        )
         result = optimize(value)
         fields = [p.path for p in result.placements]
-        self.assertEqual(fields, ["S.b", "S.a"])
-        # With 33 useful bits and no rsvd, one crossing is unavoidable.
-        self.assertEqual(result.cost.cross32, 1)
-        self.assertEqual(result.size_bits, 33)
+        self.assertEqual(fields, ["S.a", "S.c", "S.b"])
+        self.assertEqual(result.cost.cross32, 0)
+        self.assertEqual(result.cost.cross8, 0)
+        self.assertEqual(result.size_bits, 40)
 
     def test_reserved_is_split_without_changing_total_size(self):
         value = Struct(
