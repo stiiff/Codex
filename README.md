@@ -20,6 +20,14 @@ python optimize_header.py tests/fixtures/layout_cases.hpp --root TelemetryPacket
 python optimize_header.py path\to\types.hpp --root Packet
 ```
 
+命令会打印优化前后差异，并默认在输入文件旁生成 `types.optimized.hpp`。也可以指定输出位置：
+
+```powershell
+python optimize_header.py types.hpp --root Packet -o Packet.optimized.hpp
+```
+
+生成的头文件保持 struct、union、数组和嵌套层级，并按最优顺序写出字段；拆分后的保留域命名为 `rsvd_0`、`rsvd_1` 等。文件顶部会记录优化前后的跨界次数。
+
 首版头文件解析器支持：
 
 - `uint1`、`uint12`、`uint17` 等任意位宽类型；

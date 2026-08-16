@@ -13,4 +13,4 @@ authors = [{ name = "struct-layout-optimizer contributors" }]
 keywords = ["bitfield", "struct", "layout", "optimization", "hardware"]
 
 [tool.setuptools]
-py-modules = ["struct_layout_optimizer", "cpp_header_parser", "optimize_header"]
+py-modules = ["struct_layout_optimizer", "cpp_header_parser", "cpp_header_writer", "optimize_header"]

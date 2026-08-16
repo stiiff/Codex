@@ -290,14 +290,22 @@ def _join(prefix: str, name: str) -> str:
 
 def optimize(type_: Type, start: int = 0) -> Result:
     """Return the exact best layout under the lexicographic ``Cost``."""
+    template = optimize_template(type_, start)
+    return evaluate(template, start, getattr(type_, "name", ""))
+
+
+def optimize_template(type_: Type, start: int = 0) -> Template:
+    """Return the fixed layout template selected by the exact search."""
+    best_template: Template | None = None
     best: Result | None = None
     for template in templates(type_):
         result = evaluate(template, start, getattr(type_, "name", ""))
         if best is None or result.cost < best.cost:
             best = result
-    if best is None:  # A structure containing only rsvd has no normal fields.
+            best_template = template
+    if best_template is None:
         raise ValueError("type has no legal layout")
-    return best
+    return best_template
 
 
 def evaluate_original(type_: Type, start: int = 0, path: str | None = None) -> Result:
