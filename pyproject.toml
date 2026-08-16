@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "struct-layout-optimizer"
+version = "0.1.0"
+description = "Optimize nested bit-field layouts for BYTE and 32-bit WORD access."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "struct-layout-optimizer contributors" }]
+keywords = ["bitfield", "struct", "layout", "optimization", "hardware"]
+
+[tool.setuptools]
+py-modules = ["struct_layout_optimizer"]
