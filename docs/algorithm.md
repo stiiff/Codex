@@ -311,7 +311,7 @@ union_cost = sum(member_cost)
 - WORD/BYTE 跨界次数；
 - `rsvd` 片段数。
 
-`optimize_template(type, start)` 返回代价最小的固定模板，`optimize(type, start)` 返回该模板的评估结果。
+精确模式下，`optimize_template(type, start)` 返回全量候选中代价最小的固定模板。自动或启发式模式通过统一的 `solve_layout` 接口选择具体求解器。
 
 ## 13. 简化伪代码
 
@@ -376,13 +376,15 @@ original.size_bits == optimized.size_bits
 
 ## 16. 最优性
 
-当前实现完整枚举：
+精确模式完整枚举：
 
 - 普通字段排列；
 - `rsvd` 拆分位置；
 - 嵌套类型模板组合。
 
-因此在当前输入模型、约束和字典序代价下，返回的是全局最优解，而不是启发式近似。
+因此精确模式在当前输入模型、约束和字典序代价下返回全局最优解。
+
+启发式模式只保证返回搜索时间预算内找到的最佳结果，不保证全局最优。报告和输出头文件会明确记录搜索模式和最优性保证。
 
 这里的“最优”不包含真实编译器 ABI padding、cache line、访问频率或字段相关性。
 
@@ -396,20 +398,22 @@ n! * C(R + n, n)
 
 如果字段包含复合类型，还要乘以各子类型的候选数。复杂度会随字段数量、`rsvd` 位数和嵌套层数快速增长。
 
-当前实现适合：
+精确模式适合：
 
 - 小型和中小型结构体；
 - 验证硬件布局规则；
 - 作为未来高性能算法的精确结果基准。
 
-大规模版本可采用：
+大型结构体使用混合启发式求解器，包含：
 
-- 子集动态规划；
-- 等价状态合并；
-- 分支限界；
+- 多起点种子顺序；
 - Beam Search；
-- 多起点局部交换；
-- 基于 `offset % 32` 的相位缓存。
+- 基于剩余字段和 `offset % 32` 的状态去重；
+- 固定字段顺序下的 `rsvd` 动态规划；
+- swap/move 局部搜索；
+- 基于类型和 `offset % 32` 的递归模板缓存；
+- 数组相位周期计分；
+- 搜索时间上限。
 
 候选状态的核心信息可以表示为：
 
@@ -435,3 +439,148 @@ n! * C(R + n, n)
 - 递归按值类型。
 
 如果输入超出该子集，解析器应报错，而不是推测真实 C++ 布局。
+
+## 19. 大规模混合求解器
+
+### 19.1 自动选择
+
+默认配置：
+
+```text
+mode = auto
+exact_threshold = 10
+beam_width = 128
+branch_width = 12
+local_iterations = 300
+time_limit = 10 秒
+random_seed = 0
+```
+
+自动模式根据当前根 struct 的直属普通字段数量选择：
+
+```text
+field_count <= exact_threshold → exact
+field_count >  exact_threshold → heuristic
+```
+
+用户也可以强制选择模式。对上百字段强制 exact 会产生不可接受的运行时间。
+
+### 19.2 32 相位缓存
+
+跨界代价只依赖绝对偏移模 32：
+
+```text
+phase = offset % 32
+```
+
+递归类型模板缓存以 `(type, phase)` 为键。同一个类型在相同相位再次出现时直接复用模板，避免重复优化嵌套结构。
+
+### 19.3 无 Placement 成本评估
+
+搜索过程中使用 `_template_cost` 只计算 `Cost`，不创建每个叶子字段的 `Placement` 对象。最终选出模板后才执行一次完整 `evaluate` 生成输出位置。
+
+这对大数组和 Beam Search 状态非常重要，可以显著降低内存分配。
+
+### 19.4 数组周期
+
+元素相位周期为：
+
+```text
+period = 32 / gcd(element_size, 32)
+```
+
+成本评估只计算一个周期内的元素，再乘以完整周期数量。数组 count 很大时，计算量不会与 count 线性增长。
+
+启发式模式会在周期内各个实际起始相位分别求出元素候选模板，去重后按整个数组的累计 Cost 选择一个统一模板。因此不会只根据第一个数组元素的相位决定所有元素布局。
+
+### 19.5 多起点顺序
+
+大型 struct 首先生成多个确定性种子：
+
+```text
+原始声明顺序
+按字段位宽降序
+按 size % 32 和位宽排序
+Beam Search 完整顺序
+```
+
+每个种子都进入固定顺序 `rsvd` 优化，选择其中代价最小者作为局部搜索起点。
+
+### 19.6 Beam Search
+
+Beam 状态包含：
+
+```text
+累计 Cost
+当前绝对 offset
+已经排列的字段
+剩余字段
+```
+
+每层只扩展即时代价最好的 `branch_width` 个字段，并最多保留 `beam_width` 个状态。
+
+状态按以下键去重：
+
+```text
+(remaining_fields, offset % 32)
+```
+
+同键只保留累计代价最小的状态。
+
+近似状态扩展量为：
+
+```text
+O(n * beam_width * branch_width)
+```
+
+实际排序候选仍有额外开销，但不会出现 `n!` 个完整排列。
+
+### 19.7 固定顺序 rsvd 动态规划
+
+字段顺序确定后，算法使用 DP 安排 `rsvd` gap。每一步最多尝试在字段前放置 0～31 位保留位：
+
+```text
+gap ∈ [0, min(31, remaining_rsvd)]
+```
+
+增加整整 32 位不改变后续相位，所以超过 31 位的等价部分可以留到尾部。DP 对相同结束相位只保留更优状态，使每层状态数最多约 32。
+
+### 19.8 局部搜索
+
+最佳种子继续执行确定性随机的：
+
+```text
+swap(i, j)
+move(i, j)
+```
+
+只有新布局的字典序 Cost 更小时才接受。`random_seed` 保证相同配置和输入可以复现结果。
+
+### 19.9 时间预算与闭环输出
+
+Beam Search、DP 和局部搜索共享同一个 deadline。时间耗尽时停止扩展并返回当前最佳完整布局。
+
+一次 `solve_layout` 同时返回：
+
+```text
+OptimizationOutcome {
+    template
+    result
+    mode
+    optimality_guaranteed
+    elapsed_seconds
+}
+```
+
+CLI 复用同一个 Outcome 生成文本报告和优化后 `.hpp`，不会重复运行搜索。
+
+### 19.10 压力测试
+
+`tests/fixtures/large_layout.hpp` 包含 120 个直属普通字段和一个可拆分保留域。测试验证：
+
+- auto 自动进入 heuristic；
+- 优化后总位宽不变；
+- Cost 不劣于原始声明顺序；
+- 在设定时间预算附近返回；
+- 输出头文件标记 `Search mode: heuristic`；
+- 输出头文件标记 `Globally optimal: no`。

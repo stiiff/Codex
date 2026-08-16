@@ -72,6 +72,10 @@ python optimize_header.py types.hpp --root Packet --start 24 -o Packet.optimized
 
 ```text
 python optimize_header.py HEADER [--root TYPE] [--start BIT] [-o OUTPUT]
+                          [--mode auto|exact|heuristic]
+                          [--time-limit SEC]
+                          [--beam-width N] [--branch-width N]
+                          [--local-iterations N] [--random-seed N]
 ```
 
 | 参数 | 含义 | 默认值 |
@@ -80,6 +84,20 @@ python optimize_header.py HEADER [--root TYPE] [--start BIT] [-o OUTPUT]
 | `--root TYPE` | 要优化的顶层 struct/union | 最后一个定义 |
 | `--start BIT` | 根类型绝对起始 bit 偏移 | `0` |
 | `-o`, `--output` | 优化后头文件路径 | `<输入名>.optimized.hpp` |
+| `--mode` | `auto`、`exact` 或 `heuristic` | `auto` |
+| `--exact-threshold` | 自动模式使用精确搜索的最大直属字段数 | `10` |
+| `--time-limit` | 启发式搜索时间预算（秒） | `10` |
+| `--beam-width` | Beam Search 每层保留状态数 | `128` |
+| `--branch-width` | 每个 Beam 状态扩展的字段数 | `12` |
+| `--local-iterations` | swap/move 局部搜索次数 | `300` |
+| `--random-seed` | 确定性随机种子 | `0` |
+
+自动模式行为：
+
+```text
+直属普通字段 <= exact_threshold  → 精确穷举，保证全局最优
+直属普通字段 >  exact_threshold  → 启发式搜索，在时间预算内返回最佳解
+```
 
 ## 支持的头文件语法
 
@@ -184,13 +202,18 @@ struct Packet {
 ```python
 from cpp_header_parser import parse_header
 from cpp_header_writer import render_optimized_header
-from struct_layout_optimizer import compare_layouts, format_comparison
+from struct_layout_optimizer import (
+    OptimizationConfig, comparison_from_outcome,
+    format_comparison, solve_layout,
+)
 
 root = parse_header("types.hpp", root="Packet")
-comparison = compare_layouts(root, start=0)
+config = OptimizationConfig(mode="auto", time_limit=10)
+outcome = solve_layout(root, start=0, config=config)
+comparison = comparison_from_outcome(root, outcome, start=0)
 
 print(format_comparison(comparison))
-optimized_hpp = render_optimized_header(root, start=0)
+optimized_hpp = render_optimized_header(root, start=0, outcome=outcome)
 ```
 
 主要接口：
@@ -202,6 +225,15 @@ optimized_hpp = render_optimized_header(root, start=0)
 - `compare_layouts(type_, start=0)`：返回优化前后结果；
 - `format_comparison(comparison)`：生成人类可读报告；
 - `render_optimized_header(type_, start=0)`：生成优化后头文件文本。
+- `solve_layout(type_, start=0, config=None)`：只运行一次搜索并返回可复用的模板、结果和搜索元数据。
+
+报告中的搜索元数据包括：
+
+```text
+搜索模式       exact / heuristic
+保证全局最优   是 / 否
+搜索耗时       秒
+```
 
 ## 示例与测试
 
@@ -232,9 +264,11 @@ struct-layout-optimizer/
 ├── examples/                      # Python API 示例
 ├── tests/
 │   ├── fixtures/layout_cases.hpp  # C++ 输入测试用例
+│   ├── fixtures/large_layout.hpp  # 120 直属字段压力用例
 │   ├── test_cpp_header_parser.py
 │   ├── test_cpp_header_writer.py
-│   └── test_optimizer.py
+│   ├── test_optimizer.py
+│   └── test_large_optimizer.py
 ├── docs/algorithm.md              # 算法原理和复杂度
 ├── pyproject.toml
 ├── LICENSE
@@ -255,6 +289,8 @@ struct-layout-optimizer/
 
 解析器会移除注释和预处理行，但不会运行真正的 C++ 预处理器。
 
-优化器当前完整枚举所有合法布局，能够返回当前代价模型下的精确最优解，但候选数会随直属字段数量、`rsvd` 位数和嵌套层数快速增长。大型结构体需要后续加入动态规划、剪枝或启发式搜索。
+小结构体使用完整枚举并保证当前代价模型下的全局最优；大型结构体自动使用多起点布局、Beam Search、相位缓存、固定顺序 `rsvd` 动态规划和 swap/move 局部搜索。启发式模式不保证全局最优，但始终返回时间预算内找到的最佳布局，并在报告和生成头文件中明确标注。
+
+仓库包含 120 个直属字段的真实头文件压力测试。默认建议大型输入使用 `--mode auto`，不要强制 `--mode exact`。
 
 详细算法参见 [docs/algorithm.md](docs/algorithm.md)。
