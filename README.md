@@ -76,7 +76,9 @@ python -m unittest discover -v
 struct-layout-optimizer/
 ├── struct_layout_optimizer.py   # 数据模型、搜索算法和报告接口
 ├── examples/                    # 可运行示例
-├── tests/                       # 自动化测试
+├── tests/
+│   ├── cases.py                 # 独立测试用例定义（等价于测试头文件）
+│   └── test_optimizer.py        # 测试执行与断言
 ├── docs/algorithm.md            # 算法与复杂度说明
 ├── pyproject.toml               # Python 项目元数据
 ├── LICENSE
